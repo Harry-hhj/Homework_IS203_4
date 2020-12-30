@@ -8,6 +8,7 @@
 
 #include "cgen.h"
 #include "cgen_gc.h"
+#include <vector>
 
 using namespace std;
 
@@ -16,6 +17,10 @@ extern int cgen_debug;
 
 static char *CALL_REGS[] = {RDI, RSI, RDX, RCX, R8, R9};
 static char *CALL_XMM[] = {XMM0, XMM1, XMM2, XMM3};
+
+typedef SymbolTable<Symbol, int> ObjectEnvironment;
+static ObjectEnvironment varNameToAddr;
+static vector<char*> name_proc;
 
 void cgen_helper(Decls decls, ostream& s);
 void code(Decls decls, ostream& s);
@@ -235,6 +240,7 @@ static void emit_xorpd(const char *source_reg, const char *dest_reg, ostream& s)
 {
   s << XORPD << source_reg << COMMA << dest_reg << endl;
 }
+
 static void emit_jmp(const char *dest, ostream& s)
 {
   s << JMP << " " << dest << endl;
@@ -430,13 +436,92 @@ static void emit_global_bool(Symbol name, ostream& s) {
   BOOLTAG << 0 << endl;
 }
 
+static bool sameType(Symbol name1, Symbol name2) {
+    return strcmp(name1->get_string(), name2->get_string()) == 0;
+}
+
+int count_len_addr_reg_shift(const char *const reg, const int deviation) {
+    if (deviation == 0) {
+        return strlen(reg);
+    }
+    else if (deviation < 0) return -1;
+    int tmp = deviation;
+    int digit = 0;
+    while (tmp != 0){
+        ++digit;
+        tmp /= 10;
+    }
+    return strlen(reg) + digit + 4;
+}
+
+static void addr_reg_shift(char* res, const char *const reg, const int deviation){
+    if (deviation == 0){
+        strcpy(res, reg);
+        return;
+    }
+    else if (deviation < 0) return;
+    res[0] = '-';
+    int digit = 0;
+    int tmp = deviation;
+    while (tmp != 0){
+        ++digit;
+        tmp /= 10;
+    }
+    char digit_[digit+1];
+    sprintf(digit_, "%d", deviation);
+    for (int i = 0; i < digit; i++) res[i+1] = digit_[i];
+    res[digit+1] = '\0';
+    res[digit+1] = '(';
+    tmp = strlen(reg);
+    for (int i = 0; i < tmp; ++i) res[digit+2+i] = reg[i];
+    res[digit+strlen(reg)+2] = ')';
+    res[digit+strlen(reg)+3] = '\0';
+    return;
+}
+
 void code_global_data(Decls decls, ostream &str)
 {
-
+    for (int i = decls->first(); decls->more(i); i = decls->next(i)) {
+        Decl tmp_decl = decls->nth(i);
+        if (!tmp_decl->isCallDecl()) {
+            VariableDecl variableDecl = static_cast<VariableDecl>(tmp_decl);
+            Symbol type_tmp = variableDecl->getType();
+            if (sameType(type_tmp, Int)){
+                emit_global_int(variableDecl->getName(), str);
+            }
+            else if (sameType(type_tmp, Float)){
+                emit_global_float(variableDecl->getName(), str);
+            }
+            else if (sameType(type_tmp, Bool)){
+                emit_global_bool(variableDecl->getName(), str);
+            }
+            // add to scope
+            varNameToAddr.addid(variableDecl->getName(), new int(name_proc.size()));
+            int len = strlen(variableDecl->getName()->get_string()) + 7;
+            name_proc.push_back(new char[len]);
+            strcpy(name_proc[name_proc.size()-1], variableDecl->getName()->get_string());
+            name_proc[name_proc.size()-1][strlen(variableDecl->getName()->get_string())+6] = '\0';
+            name_proc[name_proc.size()-1][strlen(variableDecl->getName()->get_string())+5] = ')';
+            name_proc[name_proc.size()-1][strlen(variableDecl->getName()->get_string())+4] = 'p';
+            name_proc[name_proc.size()-1][strlen(variableDecl->getName()->get_string())+3] = 'i';
+            name_proc[name_proc.size()-1][strlen(variableDecl->getName()->get_string())+2] = 'r';
+            name_proc[name_proc.size()-1][strlen(variableDecl->getName()->get_string())+1] = '%';
+            name_proc[name_proc.size()-1][strlen(variableDecl->getName()->get_string())] = '(';
+            //            variableDecl->code(str); Note that this function is for temporary variableDecls in callDecl.
+        }
+    }
 }
 
 void code_calls(Decls decls, ostream &str) {
+    str << SECTION << RODATA << endl;
 
+    for (int i = decls->first(); decls->more(i); i = decls->next(i)) {
+        Decl tmp_decl = decls->nth(i);
+        if (tmp_decl->isCallDecl()) {
+            CallDecl call = static_cast<CallDecl>(tmp_decl);
+            call->code(str);
+        }
+    }
 }
 
 //***************************************************
@@ -457,18 +542,20 @@ void code_calls(Decls decls, ostream &str) {
 
 void cgen_helper(Decls decls, ostream& s)
 {
-
-  code(decls, s);
+    code(decls, s);
 }
 
 
 void code(Decls decls, ostream& s)
 {
-  if (cgen_debug) cout << "Coding global data" << endl;
-  code_global_data(decls, s);
+    cgen_debug=1;
+    varNameToAddr.enterscope();
+    if (cgen_debug) cout << "Coding global data\n";
+    code_global_data(decls, s);
 
-  if (cgen_debug) cout << "Coding calls" << endl;
-  code_calls(decls, s);
+    if (cgen_debug) cout << "Coding calls\n";
+    code_calls(decls, s);
+    varNameToAddr.exitscope();
 }
 
 //******************************************************************
@@ -482,31 +569,99 @@ void code(Decls decls, ostream& s)
 //*****************************************************************
 
 void CallDecl_class::code(ostream &s) {
+    if (cgen_debug) cout << "--- CallDecl_class::code :: name " << name->get_string() << " ---\n";
+    varNameToAddr.enterscope();
 
+    // Header part
+    s << GLOBAL << name << endl <<
+    SYMBOL_TYPE << name << ", " << FUNCTION << endl <<
+    name << ':' << endl;
+
+    // save workspace first
+    //    TODO:caller to protect R10, R11
+    emit_push(RBP, s);
+    emit_mov(RSP, RBP, s);
+    emit_push(RBX, s);
+    emit_push(R12, s);
+    emit_push(R13, s);
+    emit_push(R14, s);
+    emit_push(R15, s);
+    int usage = 40;
+
+    Variables params = getVariables();
+    for (int i = params->first(); params->more(i); i = params->next(i)){
+        // new stack piece
+        emit_sub("$8", RSP, s);
+        // move param to sub stack
+        usage += 8;
+        int len = count_len_addr_reg_shift(CALL_REGS[i], usage);
+        char reg[len];
+        addr_reg_shift(reg, CALL_REGS[i], usage);
+        emit_mov(CALL_REGS[i], reg,s);
+        // add to scope TODO
+        varNameToAddr.addid(params->nth(i)->getName(), new int(name_proc.size()));
+        char *c = new char[len];
+        strcpy(c, reg);
+        name_proc.push_back(c);
+    }
+    // check body TODO
+    getBody()->code(s);
+
+//not this problem zhuang tai ji cun qi mei bao cun
+    // restore previous workspace
+    emit_pop(R15, s);
+    emit_pop(R14, s);
+    emit_pop(R13, s);
+    emit_pop(R12, s);
+    emit_pop(RBX, s);
+
+    // return
+    emit_leave(s);
+    emit_ret(s);
+    s << SIZE << name << COMMA << ".-" << name <<endl;
+
+    varNameToAddr.exitscope();
+    if (cgen_debug) cout << "--- CallDecl_class::code :: name " << name->get_string() << " ---\n";
 }
 
 void StmtBlock_class::code(ostream &s){
- 
+    if (cgen_debug) cout << "--- StmtBlock_class::code " << " ---\n";
+    varNameToAddr.enterscope();
+
+    VariableDecls localVarDecls = getVariableDecls();
+    for (int i = localVarDecls->first(); localVarDecls->more(i); i = localVarDecls->next(i)) {
+        VariableDecl localVarDecl = localVarDecls->nth(i);
+        localVarDecl->code(s);
+    }
+    Stmts localStmts = getStmts();
+    Stmt localStmt;
+    for (int i = localStmts->first(); localStmts->more(i); i = localStmts->next(i)) {
+        localStmt = localStmts->nth(i);
+        localStmt->code(s);
+    }
+
+    varNameToAddr.exitscope();
+    if (cgen_debug) cout << "--- StmtBlock_class::code " << " ---\n";
 }
 
 void IfStmt_class::code(ostream &s) {
- 
+
 }
 
 void WhileStmt_class::code(ostream &s) {
- 
+
 }
 
 void ForStmt_class::code(ostream &s) {
- 
+
 }
 
 void ReturnStmt_class::code(ostream &s) {
-  
+
 }
 
 void ContinueStmt_class::code(ostream &s) {
- 
+
 }
 
 void BreakStmt_class::code(ostream &s) {
@@ -531,75 +686,75 @@ void Call_class::code(ostream &s) {
 }
 
 void Actual_class::code(ostream &s) {
-  
+
 }
 
 void Assign_class::code(ostream &s) {
- 
+
 }
 
 void Add_class::code(ostream &s) {
-  
+
 }
 
 void Minus_class::code(ostream &s) {
- 
+
 }
 
 void Multi_class::code(ostream &s) {
- 
+
 }
 
 void Divide_class::code(ostream &s) {
- 
+
 }
 
 void Mod_class::code(ostream &s) {
- 
+
 }
 
 void Neg_class::code(ostream &s) {
- 
+
 }
 
 void Lt_class::code(ostream &s) {
-  
+
 }
 
 void Le_class::code(ostream &s) {
- 
+
 }
 
 void Equ_class::code(ostream &s) {
- 
+
 }
 
 void Neq_class::code(ostream &s) {
- 
+
 }
 
 void Ge_class::code(ostream &s) {
- 
+
 }
 
 void Gt_class::code(ostream &s) {
- 
+
 }
 
 void And_class::code(ostream &s) {
- 
+
 }
 
 void Or_class::code(ostream &s) {
- 
+
 }
 
 void Xor_class::code(ostream &s) {
- 
+
 }
 
 void Not_class::code(ostream &s) {
- 
+
 }
 
 void Bitnot_class::code(ostream &s) {
@@ -611,27 +766,27 @@ void Bitand_class::code(ostream &s) {
 }
 
 void Bitor_class::code(ostream &s) {
- 
+
 }
 
 void Const_int_class::code(ostream &s) {
- 
+
 }
 
 void Const_string_class::code(ostream &s) {
- 
+
 }
 
 void Const_float_class::code(ostream &s) {
- 
+
 }
 
 void Const_bool_class::code(ostream &s) {
- 
+
 }
 
 void Object_class::code(ostream &s) {
- 
+
 }
 
 void No_expr_class::code(ostream &s) {
