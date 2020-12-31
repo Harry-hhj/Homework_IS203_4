@@ -760,44 +760,515 @@ void Assign_class::code(ostream &s) {
 
 void Add_class::code(ostream &s) {
     if (init_once) {
+        e1->code(s);
+        e2->code(s);
         return;
     }
+    if (cgen_debug) cout << "--- Add_class::code ---\n";
 
+    // caution: their order
+    e1->code(s);
+    e2->code(s);
+
+    // get stack space ready for the result
+    emit_sub("$8", RSP, s);
+    curr_usage += 8;
+    int res_addr = curr_usage;
+    // compute the result
+    // case: both Int
+    if (sameType(e1->getType(), Int) && sameType(e2->getType(), Int)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, R12, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        delete c;
+        emit_add(RBX, R12, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_mov(R12, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: both Float
+    else if (sameType(e1->getType(), Float) && sameType(e2->getType(), Float)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM4, s);
+        delete c;
+        emit_addsd(XMM4, XMM5, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM5, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: Int, Float
+    else if (sameType(e1->getType(), Int)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        emit_int_to_float(RBX, XMM4, s);
+        delete c;
+        emit_addsd(XMM4, XMM5, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM5, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: Float, Int
+    else {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        emit_int_to_float(RBX, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM4, s);
+        delete c;
+        emit_addsd(XMM4, XMM5, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM5, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+
+    if (cgen_debug) cout << "--- Add_class::code ---\n";
 }
 
 void Minus_class::code(ostream &s) {
     if (init_once) {
+        e1->code(s);
+        e2->code(s);
         return;
     }
+    if (cgen_debug) cout << "--- Minus_class::code ---\n";
 
+    // caution: their order
+    e1->code(s);
+    e2->code(s);
+
+    // get stack space ready for the result
+    emit_sub("$8", RSP, s);
+    curr_usage += 8;
+    int res_addr = curr_usage;
+    // compute the result
+    // case: both Int
+    if (sameType(e1->getType(), Int) && sameType(e2->getType(), Int)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, R12, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        delete c;
+        emit_sub(RBX, R12, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_mov(R12, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: both Float
+    else if (sameType(e1->getType(), Float) && sameType(e2->getType(), Float)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM4, s);
+        delete c;
+        emit_subsd(XMM4, XMM5, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM5, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: Int, Float
+    else if (sameType(e1->getType(), Int)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        emit_int_to_float(RBX, XMM4, s);
+        delete c;
+        emit_subsd(XMM4, XMM5, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM5, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: Float, Int
+    else {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        emit_int_to_float(RBX, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM4, s);
+        delete c;
+        emit_subsd(XMM5, XMM4, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM4, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+
+    if (cgen_debug) cout << "--- Minus_class::code ---\n";
 }
 
 void Multi_class::code(ostream &s) {
     if (init_once) {
+        e1->code(s);
+        e2->code(s);
         return;
     }
+    if (cgen_debug) cout << "--- Multi_class::code ---\n";
 
+    // caution: their order
+    e1->code(s);
+    e2->code(s);
+
+    // get stack space ready for the result
+    emit_sub("$8", RSP, s);
+    curr_usage += 8;
+    int res_addr = curr_usage;
+    // compute the result
+    // case: both Int
+    if (sameType(e1->getType(), Int) && sameType(e2->getType(), Int)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, R12, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        delete c;
+        emit_mul(R12, RBX, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_mov(RBX, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: both Float
+    else if (sameType(e1->getType(), Float) && sameType(e2->getType(), Float)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM4, s);
+        delete c;
+        emit_mulsd(XMM5, XMM4, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM4, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: Int, Float
+    else if (sameType(e1->getType(), Int)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        emit_int_to_float(RBX, XMM4, s);
+        delete c;
+        emit_mulsd(XMM5, XMM4, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM4, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: Float, Int
+    else {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        emit_int_to_float(RBX, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM4, s);
+        delete c;
+        emit_mulsd(XMM5, XMM4, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM4, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+
+    if (cgen_debug) cout << "--- Multi_class::code ---\n";
 }
 
 void Divide_class::code(ostream &s) {
     if (init_once) {
+        e1->code(s);
+        e2->code(s);
         return;
     }
+    if (cgen_debug) cout << "--- Divide_class::code ---\n";
 
+    // caution: their order
+    e1->code(s);
+    e2->code(s);
+
+    // get stack space ready for the result
+    emit_sub("$8", RSP, s);
+    curr_usage += 8;
+    int res_addr = curr_usage;
+    // compute the result
+    // case: both Int
+    if (sameType(e1->getType(), Int) && sameType(e2->getType(), Int)) {
+        const char *c1 = operandStack.top();
+        operandStack.pop();
+        const char *c2 = operandStack.top();
+        operandStack.pop();
+        emit_mov(c2, RAX, s);
+        emit_cqto(s);
+        emit_mov(c1, RBX, s);
+        delete c1;
+        delete c2;
+        emit_div(RBX, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_mov(RAX, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: both Float
+    else if (sameType(e1->getType(), Float) && sameType(e2->getType(), Float)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM4, s);
+        delete c;
+        emit_divsd(XMM5, XMM4, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM4, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+    // case: Int, Float
+    else if (sameType(e1->getType(), Int)) {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        emit_int_to_float(RBX, XMM4, s);
+        delete c;
+        emit_divsd(XMM5, XMM4, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM4, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+        // case: Float, Int
+    else {
+        const char *c = operandStack.top();
+        operandStack.pop();
+        emit_mov(c, RBX, s);
+        emit_int_to_float(RBX, XMM5, s);
+        delete c;
+        c = operandStack.top();
+        operandStack.pop();
+        emit_movsd(c, XMM4, s);
+        delete c;
+        emit_divsd(XMM5, XMM4, s);
+        // store result
+        int len = count_len_addr_reg_shift(RBP, res_addr);
+        char reg[len];
+        addr_reg_shift(reg, RBP, res_addr);
+        emit_movsd(XMM4, reg, s);
+
+        // put result into the operandStack
+        char *str = new char[len];
+        strcpy(str, reg);
+        operandStack.push(str);
+    }
+
+    if (cgen_debug) cout << "--- Divide_class::code ---\n";
 }
 
 void Mod_class::code(ostream &s) {
     if (init_once) {
+        e1->code(s);
+        e2->code(s);
         return;
     }
+    if (cgen_debug) cout << "--- Mod_class::code ---\n";
 
+    // caution: their order
+    e1->code(s);
+    e2->code(s);
+
+    // get stack space ready for the result
+    emit_sub("$8", RSP, s);
+    curr_usage += 8;
+    int res_addr = curr_usage;
+    // compute the result
+    const char *c1 = operandStack.top();
+    operandStack.pop();
+    const char *c2 = operandStack.top();
+    operandStack.pop();
+    emit_mov(c2, RAX, s);
+    emit_cqto(s);
+    emit_mov(c1, RBX, s);
+    delete c1;
+    delete c2;
+    emit_div(RBX, s);
+    // store result
+    int len = count_len_addr_reg_shift(RBP, res_addr);
+    char reg[len];
+    addr_reg_shift(reg, RBP, res_addr);
+    emit_mov(RBX, reg, s);
+
+    // put result into the operandStack
+    char *str = new char[len];
+    strcpy(str, reg);
+    operandStack.push(str);
+
+    if (cgen_debug) cout << "--- Mod_class::code ---\n";
 }
 
 void Neg_class::code(ostream &s) {
     if (init_once) {
+        e1->code(s);
         return;
     }
 
+    e1->code(s);
+    // get stack space ready for the result
+    emit_sub("$8", RSP, s);
+    curr_usage += 8;
+    int res_addr = curr_usage;
+    const char *c = operandStack.top();
+    operandStack.pop();
+    emit_mov(c, RAX, s);
+    emit_neg(RAX, s);
+    // store result
+    int len = count_len_addr_reg_shift(RBP, res_addr);
+    char reg[len];
+    addr_reg_shift(reg, RBP, res_addr);
+    emit_mov(RAX, reg, s);
+
+    // put result into the operandStack
+    char *str = new char[len];
+    strcpy(str, reg);
+    operandStack.push(str);
 }
 
 void Lt_class::code(ostream &s) {
