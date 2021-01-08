@@ -40,7 +40,7 @@ struct LOOP {
         delete [] back;
         delete [] next;
     }
-};
+};  // restore the begining and next POS
 static stack<LOOP *> LOOP_MSG;
 
 void cgen_helper(Decls decls, ostream &s);
@@ -864,9 +864,9 @@ void ContinueStmt_class::code(ostream &s) {
     if (cgen_debug) cout << "--- ContinueStmt_class::code ---\n";
 
     LOOP *msg = LOOP_MSG.top();
-    LOOP_MSG.pop();
+//    LOOP_MSG.pop();
     emit_jmp(msg->back, s);
-    delete msg;
+//    delete msg;
 
     if (cgen_debug) cout << "--- ContinueStmt_class::code ---\n";
 }
@@ -879,9 +879,9 @@ void BreakStmt_class::code(ostream &s) {
     if (cgen_debug) cout << "--- BreakStmt_class::code ---\n";
 
     LOOP *msg = LOOP_MSG.top();
-    LOOP_MSG.pop();
+//    LOOP_MSG.pop();
     emit_jmp(msg->next, s);
-    delete msg;
+//    delete msg;
 
     if (cgen_debug) cout << "--- BreakStmt_class::code ---\n";
 }
