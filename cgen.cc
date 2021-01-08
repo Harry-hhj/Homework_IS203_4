@@ -28,6 +28,20 @@ static int curr_usage = 0;  // indicate the height between rsp and rbp
 static int pos_available = 0;  // indicate which .POSX: is available
 static stack<char const *> operandStack;  // TODO: some of its content cannot be cleared e.g. a+b;
 static bool init_once = true;
+struct LOOP {
+    char const *back;
+    char const *next;
+
+    LOOP(char *b, char *n){
+        back = b; next = n;
+    }
+
+    ~LOOP() {
+        delete [] back;
+        delete [] next;
+    }
+};
+static stack<LOOP *> LOOP_MSG;
 
 void cgen_helper(Decls decls, ostream &s);
 
@@ -505,7 +519,7 @@ void cgen_helper(Decls decls, ostream &s) {
 
 
 void code(Decls decls, ostream &s) {
-    cgen_debug = 1;
+    cgen_debug = 0;
     varNameToAddr.enterscope();
     if (cgen_debug) cout << "Coding global data\n";
     code_global_data(decls, s);
@@ -547,7 +561,9 @@ void CallDecl_class::code(ostream &s) {
     emit_push(R13, s);
     emit_push(R14, s);
     emit_push(R15, s);
-    curr_usage = 40;
+    if (name->get_string() == Main->get_string()) curr_usage = 0;
+    else curr_usage = 40;
+
 
     Variables params = getVariables();
     for (int i = params->first(); params->more(i); i = params->next(i)) {
@@ -559,7 +575,7 @@ void CallDecl_class::code(ostream &s) {
         char reg[len];
         addr_reg_shift(reg, RBP, curr_usage);
         emit_mov(CALL_REGS[i], reg, s);
-        // add to scope TODO
+        // add to scope
         varNameToAddr.addid(params->nth(i)->getName(), new int(name_proc.size()));
         char *c = new char[len];
         strcpy(c, reg);
@@ -568,18 +584,7 @@ void CallDecl_class::code(ostream &s) {
     // check body TODO
     getBody()->code(s);
 
-
-//not this problem zhuang tai ji cun qi mei bao cun
-    // restore previous workspace
-    emit_pop(R15, s);
-    emit_pop(R14, s);
-    emit_pop(R13, s);
-    emit_pop(R12, s);
-    emit_pop(RBX, s);
-
-    // return
-    emit_leave(s);
-    emit_ret(s);
+    // after return
     s << SIZE << name << COMMA << ".-" << name << endl;
 
     varNameToAddr.exitscope();
@@ -598,8 +603,19 @@ void StmtBlock_class::code(ostream &s) {
 
     VariableDecls localVarDecls = getVariableDecls();
     for (int i = localVarDecls->first(); localVarDecls->more(i); i = localVarDecls->next(i)) {
-        VariableDecl localVarDecl = localVarDecls->nth(i);
-        localVarDecl->code(s);
+//        localVarDecl->code(s);
+        // new stack piece
+        emit_sub("$8", RSP, s);
+        // move param to sub stack
+        curr_usage += 8;
+        int len = count_len_addr_reg_shift(RBP, curr_usage);
+        char reg[len];
+        addr_reg_shift(reg, RBP, curr_usage);
+        // add to scope
+        varNameToAddr.addid(localVarDecls->nth(i)->getName(), new int(name_proc.size()));
+        char *c = new char[len];
+        strcpy(c, reg);
+        name_proc.push_back(c);
     }
     Stmts localStmts = getStmts();
     Stmt localStmt;
@@ -621,6 +637,7 @@ void IfStmt_class::code(ostream &s) {
     }
     if (cgen_debug) cout << "--- IfStmt_class::code " << " ---\n";
 
+    // get 2 POS name
     int pos_usable = pos_available; // pos_usable: else, pos_usable+1: basic basic after ifstmt
     pos_available += 2;
     getCondition()->code(s);
@@ -665,16 +682,140 @@ void IfStmt_class::code(ostream &s) {
 
 void WhileStmt_class::code(ostream &s) {
     if (init_once) {
+        condition->code(s);
+        body->code(s);
         return;
     }
 
+    if (cgen_debug) cout << "--- WhileStmt_class::code " << " ---\n";
+
+    // get 2 POS name
+    int pos_usable = pos_available; // pos_usable: body; pos_usable+1: outside while
+    pos_available += 2;
+    int tmp = pos_usable;
+    int digit = 0;
+    if (tmp == 0) digit = 1;
+    else
+        while (tmp != 0) {
+            ++digit;
+            tmp /= 10;
+        }
+    char *pos_char = new char[digit + 6];
+    sprintf(pos_char, "%s%d", POSITION, pos_usable);
+    tmp = pos_usable + 1;
+    digit = 0;
+    if (tmp == 0) digit = 1;
+    else
+        while (tmp != 0) {
+            ++digit;
+            tmp /= 10;
+        }
+    char *pos_char1 = new char[digit + 6];
+    sprintf(pos_char1, "%s%d", POSITION, pos_usable + 1);
+
+    // add while message to LOOP_MSG
+    char * msg1 = new char[strlen(pos_char)];
+    strcpy(msg1, pos_char);
+    char * msg2 = new char[strlen(pos_char1)];
+    strcpy(msg2, pos_char1);
+    LOOP *msg = new LOOP(msg1, msg2);
+    LOOP_MSG.push(msg);
+
+    // loop: check -> run -> back
+    emit_position(pos_char, s);
+    condition->code(s);
+    const char *c = operandStack.top();
+    operandStack.pop();
+    emit_mov(c, RAX, s);
+    emit_test(RAX, RAX, s);
+    emit_jz(pos_char1, s);
+    body->code(s);
+    emit_jmp(pos_char, s);
+
+    // next stmt
+    emit_position(pos_char1, s);
+
+    delete []pos_char;
+    delete []pos_char1;
+
+    if (cgen_debug) cout << "--- WhileStmt_class::code " << " ---\n";
 }
 
 void ForStmt_class::code(ostream &s) {
     if (init_once) {
+        initexpr->code(s);
+        condition->code(s);
+        loopact->code(s);
+        body->code(s);
         return;
     }
 
+    if (cgen_debug) cout << "--- ForStmt_class::code " << " ---\n";
+
+    initexpr->code(s);
+
+    // get 3 POS name
+    int pos_usable = pos_available; // pos_usable: condition; pos_usable+1: loopact; pos_usable+2: outside for
+    pos_available += 3;
+    int tmp = pos_usable;
+    int digit = 0;
+    if (tmp == 0) digit = 1;
+    else
+        while (tmp != 0) {
+            ++digit;
+            tmp /= 10;
+        }
+    char *pos_char = new char[digit + 6];
+    sprintf(pos_char, "%s%d", POSITION, pos_usable);
+    tmp = pos_usable + 1;
+    digit = 0;
+    if (tmp == 0) digit = 1;
+    else
+        while (tmp != 0) {
+            ++digit;
+            tmp /= 10;
+        }
+    char *pos_char1 = new char[digit + 6];
+    sprintf(pos_char1, "%s%d", POSITION, pos_usable + 1);
+    tmp = pos_usable + 1;
+    digit = 0;
+    if (tmp == 0) digit = 1;
+    else
+        while (tmp != 0) {
+            ++digit;
+            tmp /= 10;
+        }
+    char *pos_char2 = new char[digit + 6];
+    sprintf(pos_char2, "%s%d", POSITION, pos_usable + 2);
+
+    // add while message to LOOP_MSG
+    char * msg1 = new char[strlen(pos_char)];
+    strcpy(msg1, pos_char);
+    char * msg2 = new char[strlen(pos_char2)];
+    strcpy(msg2, pos_char1);
+    LOOP *msg = new LOOP(msg1, msg2);
+    LOOP_MSG.push(msg);
+
+    emit_position(pos_char, s);
+    condition->code(s);
+    const char *c = operandStack.top();
+    operandStack.pop();
+    emit_mov(c, RAX, s);
+    emit_test(RAX, RAX, s);
+    emit_jz(pos_char2, s);
+    body->code(s);
+
+    emit_position(pos_char1, s);
+    loopact->code(s);
+    emit_jmp(pos_char, s);
+
+    emit_position(pos_char2, s);
+
+    delete []pos_char;
+    delete []pos_char1;
+    delete []pos_char2;
+
+    if (cgen_debug) cout << "--- ForStmt_class::code " << " ---\n";
 }
 
 void ReturnStmt_class::code(ostream &s) {
@@ -683,6 +824,13 @@ void ReturnStmt_class::code(ostream &s) {
         return;
     }
     if (cgen_debug) cout << "--- ReturnStmt_class::code ---\n";
+
+    // clear LOOP_MSG first
+//    while (!LOOP_MSG.empty()) {
+//        LOOP *l = LOOP_MSG.top();
+//        LOOP_MSG.pop();
+//        delete l;
+//    }
 
     // put the result into %rax
     value->code(s);
@@ -693,6 +841,16 @@ void ReturnStmt_class::code(ostream &s) {
         delete c;
     }
 
+    // restore previous workspace
+    emit_pop(R15, s);
+    emit_pop(R14, s);
+    emit_pop(R13, s);
+    emit_pop(R12, s);
+    emit_pop(RBX, s);
+    // go back
+    emit_leave(s);
+    emit_ret(s);
+
     if (cgen_debug) cout << "--- ReturnStmt_class::code ---\n";
 }
 
@@ -701,18 +859,109 @@ void ContinueStmt_class::code(ostream &s) {
         return;
     }
 
+    if (cgen_debug) cout << "--- ContinueStmt_class::code ---\n";
+
+    LOOP *msg = LOOP_MSG.top();
+    LOOP_MSG.pop();
+    emit_jmp(msg->back, s);
+    delete msg;
+
+    if (cgen_debug) cout << "--- ContinueStmt_class::code ---\n";
 }
 
 void BreakStmt_class::code(ostream &s) {
     if (init_once) {
         return;
     }
+
+    if (cgen_debug) cout << "--- BreakStmt_class::code ---\n";
+
+    LOOP *msg = LOOP_MSG.top();
+    LOOP_MSG.pop();
+    emit_jmp(msg->next, s);
+    delete msg;
+
+    if (cgen_debug) cout << "--- BreakStmt_class::code ---\n";
 }
 
 void Call_class::code(ostream &s) {
     if (init_once) {
+        for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) actuals->nth(i)->code(s);
         return;
     }
+    if (cgen_debug) cout << "--- Call_class::code ---\n";
+
+    if (strcmp(name->get_string(), print->get_string())==0) {
+        int float_cnt = 0;
+        for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
+            actuals->nth(i)->code(s);
+            if (sameType(actuals->nth(i)->getType(), Float)) ++float_cnt;
+        }
+        for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
+            const char *a = operandStack.top();
+            operandStack.pop();
+            emit_mov(a, CALL_REGS[actuals->len()-1-i], s);
+        }
+        // get stack space ready for the result
+        emit_sub("$8", RSP, s);
+        curr_usage += 8;
+        int res_addr = curr_usage;
+        int tmp = float_cnt;
+        int digit = 0;
+        if (tmp == 0) digit = 1;
+        else
+            while (tmp != 0) {
+                ++digit;
+                tmp /= 10;
+            }
+        char ctmp[digit];
+        sprintf(ctmp, "%d", float_cnt);
+        emit_irmovl(ctmp, EAX, s);
+        // store the workspace (caller reg)
+        emit_push(R10, s);
+        emit_push(R11, s);
+        curr_usage += 16;
+        // call
+        emit_call(name->get_string(), s);
+        // restore workspace
+        emit_pop(R11, s);
+        emit_pop(R10, s);
+        curr_usage -= 16;
+    }
+    else {
+        for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
+            actuals->nth(i)->code(s);
+            const char *a = operandStack.top();
+            operandStack.pop();
+            emit_mov(a, CALL_REGS[i], s);
+        }
+        // store the workspace (caller reg)
+//        emit_push(R10, s);
+//        emit_push(R11, s);
+//        curr_usage += 16;
+        // call
+        emit_call(name->get_string(), s);
+        // restore workspace
+//        emit_pop(R11, s);
+//        emit_pop(R10, s);
+//        curr_usage -= 16;
+        if (!sameType(getType(), Void)) {
+            // get stack space ready for the result
+            emit_sub("$8", RSP, s);
+            curr_usage += 8;
+            int res_addr = curr_usage;
+            int len = count_len_addr_reg_shift(RBP, res_addr);
+            char reg[len];
+            addr_reg_shift(reg, RBP, res_addr);
+            // get the result
+            emit_mov(RAX, reg, s);
+            char *c = new char[len];
+            strcpy(c, reg);
+            operandStack.push(c);
+        }
+    }
+
+    if (cgen_debug) cout << "--- Call_class::code ---\n";
 
     //
     /*
@@ -732,9 +981,14 @@ void Call_class::code(ostream &s) {
 
 void Actual_class::code(ostream &s) {
     if (init_once) {
+        expr->code(s);
         return;
     }
+    if (cgen_debug) cout << "--- Actual_class::code ---\n";
 
+    expr->code(s);
+
+    if (cgen_debug) cout << "--- Actual_class::code ---\n";
 }
 
 void Assign_class::code(ostream &s) {
@@ -754,6 +1008,11 @@ void Assign_class::code(ostream &s) {
     int *idx = varNameToAddr.lookup(lvalue);
     const char *addr = name_proc[*idx];
     emit_mov(RAX, addr, s);
+
+    // put result into the operandStack
+    char *str = new char[strlen(addr)];
+    strcpy(str, addr);
+    operandStack.push(str);
 
     if (cgen_debug) cout << "--- Assign_class::code ---\n";
 }
@@ -797,7 +1056,7 @@ void Add_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(e1->getType(), Float) && sameType(e2->getType(), Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -819,7 +1078,7 @@ void Add_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int, Float
+        // case: Int, Float
     else if (sameType(e1->getType(), Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -842,7 +1101,7 @@ void Add_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Float, Int
+        // case: Float, Int
     else {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -908,7 +1167,7 @@ void Minus_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(e1->getType(), Float) && sameType(e2->getType(), Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -930,7 +1189,7 @@ void Minus_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int, Float
+        // case: Int, Float
     else if (sameType(e1->getType(), Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -953,7 +1212,7 @@ void Minus_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Float, Int
+        // case: Float, Int
     else {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1019,7 +1278,7 @@ void Multi_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(e1->getType(), Float) && sameType(e2->getType(), Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1041,7 +1300,7 @@ void Multi_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int, Float
+        // case: Int, Float
     else if (sameType(e1->getType(), Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1064,7 +1323,7 @@ void Multi_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Float, Int
+        // case: Float, Int
     else {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1131,7 +1390,7 @@ void Divide_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(e1->getType(), Float) && sameType(e2->getType(), Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1153,7 +1412,7 @@ void Divide_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int, Float
+        // case: Int, Float
     else if (sameType(e1->getType(), Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1234,7 +1493,7 @@ void Mod_class::code(ostream &s) {
     int len = count_len_addr_reg_shift(RBP, res_addr);
     char reg[len];
     addr_reg_shift(reg, RBP, res_addr);
-    emit_mov(RBX, reg, s);
+    emit_mov(RDX, reg, s);
 
     // put result into the operandStack
     char *str = new char[len];
@@ -1337,7 +1596,7 @@ void Lt_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(type1, Float) && sameType(type2, Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1384,8 +1643,8 @@ void Lt_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int Float
-    else if (sameType(type1, Int)){
+        // case: Int Float
+    else if (sameType(type1, Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
         emit_movsd(c, XMM1, s);
@@ -1433,7 +1692,7 @@ void Lt_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Float, Int
+        // case: Float, Int
     else {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1552,7 +1811,7 @@ void Le_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(type1, Float) && sameType(type2, Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1599,8 +1858,8 @@ void Le_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int Float
-    else if (sameType(type1, Int)){
+        // case: Int Float
+    else if (sameType(type1, Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
         emit_movsd(c, XMM1, s);
@@ -1648,7 +1907,7 @@ void Le_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Float, Int
+        // case: Float, Int
     else {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1767,7 +2026,7 @@ void Equ_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(type1, Float) && sameType(type2, Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -1814,8 +2073,8 @@ void Equ_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int Float
-    else if (sameType(type1, Int)){
+        // case: Int Float
+    else if (sameType(type1, Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
         emit_movsd(c, XMM1, s);
@@ -1982,7 +2241,7 @@ void Neq_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(type1, Float) && sameType(type2, Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -2029,8 +2288,8 @@ void Neq_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int Float
-    else if (sameType(type1, Int)){
+        // case: Int Float
+    else if (sameType(type1, Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
         emit_movsd(c, XMM1, s);
@@ -2078,7 +2337,7 @@ void Neq_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Float, Int
+        // case: Float, Int
     else {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -2197,7 +2456,7 @@ void Ge_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(type1, Float) && sameType(type2, Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -2244,8 +2503,8 @@ void Ge_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int Float
-    else if (sameType(type1, Int)){
+        // case: Int Float
+    else if (sameType(type1, Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
         emit_movsd(c, XMM1, s);
@@ -2293,7 +2552,7 @@ void Ge_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Float, Int
+        // case: Float, Int
     else {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -2412,7 +2671,7 @@ void Gt_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: both Float
+        // case: both Float
     else if (sameType(type1, Float) && sameType(type2, Float)) {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -2459,8 +2718,8 @@ void Gt_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Int Float
-    else if (sameType(type1, Int)){
+        // case: Int Float
+    else if (sameType(type1, Int)) {
         const char *c = operandStack.top();
         operandStack.pop();
         emit_movsd(c, XMM1, s);
@@ -2508,7 +2767,7 @@ void Gt_class::code(ostream &s) {
         strcpy(str, reg);
         operandStack.push(str);
     }
-    // case: Float, Int
+        // case: Float, Int
     else {
         const char *c = operandStack.top();
         operandStack.pop();
@@ -2651,35 +2910,30 @@ void Xor_class::code(ostream &s) {
     e1->code(s);
     e2->code(s);
 
-    if (sameType(e1->getType(), Bool))
-    {
-        // get stack space ready for the result
-        emit_sub("$8", RSP, s);
-        curr_usage += 8;
-        int res_addr = curr_usage;
-        // compute the result
-        const char *c = operandStack.top();
-        operandStack.pop();
-        emit_mov(c, RDX, s);
-        delete c;
-        c = operandStack.top();
-        operandStack.pop();
-        emit_mov(c, RAX, s);
-        emit_xor(RAX, RDX, s);
+    // get stack space ready for the result
+    emit_sub("$8", RSP, s);
+    curr_usage += 8;
+    int res_addr = curr_usage;
+    // compute the result
+    const char *c = operandStack.top();
+    operandStack.pop();
+    emit_mov(c, RDX, s);
+    delete c;
+    c = operandStack.top();
+    operandStack.pop();
+    emit_mov(c, RAX, s);
+    delete c;
+    emit_xor(RAX, RDX, s);
 
-        int len = count_len_addr_reg_shift(RBP, res_addr);
-        char reg[len];
-        addr_reg_shift(reg, RBP, res_addr);
-        emit_mov(RBP, reg, s);
+    int len = count_len_addr_reg_shift(RBP, res_addr);
+    char reg[len];
+    addr_reg_shift(reg, RBP, res_addr);
+    emit_mov(RBP, reg, s);
 
-        // put result into the operandStack
-        char *str = new char[len];
-        strcpy(str, reg);
-        operandStack.push(str);
-    }
-    else{
-        //TODO
-    }
+    // put result into the operandStack
+    char *str = new char[len];
+    strcpy(str, reg);
+    operandStack.push(str);
 
     if (cgen_debug) cout << "--- Xor_class::code ---\n";
 }
@@ -2866,7 +3120,7 @@ void Const_string_class::code(ostream &s) {
     // get .LCX
     int tmp = -1;
     for (int i = stringtable.first(); stringtable.more(i); i = stringtable.next(i))
-        if (strcmp(stringtable.lookup(i)->get_string(), value->get_string())==0) tmp = i;
+        if (strcmp(stringtable.lookup(i)->get_string(), value->get_string()) == 0) tmp = i;
     int digit = 0;
     if (tmp == 0) digit = 1;
     else
@@ -2874,14 +3128,14 @@ void Const_string_class::code(ostream &s) {
             ++digit;
             tmp /= 10;
         }
-    char *c1 = new char[digit+4];
-    strcpy(c1, STRINGCONST_PREFIX);
-    char c2[digit+1];
+    char *c1 = new char[digit + 5];
+    strcpy(c1, "$.LC");
+    char c2[digit + 1];
     sprintf(c2, "%d", tmp);
     for (int i = 0; i < int(strlen(c2)); ++i) {
-        c1[3+i] = c2[i];
+        c1[4 + i] = c2[i];
     }
-    c1[digit+3] = '\0';
+    c1[digit + 4] = '\0';
     // assign the value -> %rax -> addr
     emit_mov(c1, RAX, s);
     int len = count_len_addr_reg_shift(RBP, curr_usage);
@@ -2971,18 +3225,26 @@ void Object_class::code(ostream &s) {
     if (init_once) {
         return;
     }
+    if (cgen_debug) cout << "--- Object_class::code ---\n";
+
     // lookup its addr in varNameToAddr
     int pos = *(varNameToAddr.lookup(var));
     char *addr = new char[strlen(name_proc[pos])];
     strcpy(addr, name_proc[pos]);
     // put addr into the operandStack
     operandStack.push(addr);
+
+    if (cgen_debug) cout << "--- Object_class::code ---\n";
 }
 
 void No_expr_class::code(ostream &s) {
     if (init_once) {
         return;
     }
+    if (cgen_debug) cout << "--- No_expr_class::code ---\n";
+
     const char *c = nullptr;
     operandStack.push(c);
+
+    if (cgen_debug) cout << "--- No_expr_class::code ---\n";
 }

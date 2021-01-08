@@ -7,5 +7,5 @@ echo "--------Test using" $filename "--------"
 name=${filename//.seal}
 ./cgen $filename -o $name.s
 ./cgen_answer $filename -o "output.s"
-#gcc $name.s -o $name
+gcc $name.s -no-pie -o $name
 #make clean
