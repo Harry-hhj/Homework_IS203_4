@@ -566,6 +566,8 @@ void CallDecl_class::code(ostream &s) {
 
 
     Variables params = getVariables();
+    int int_num = 0;
+    int float_num = 0;
     for (int i = params->first(); params->more(i); i = params->next(i)) {
         // new stack piece
         emit_sub("$8", RSP, s);
@@ -574,7 +576,8 @@ void CallDecl_class::code(ostream &s) {
         int len = count_len_addr_reg_shift(RBP, curr_usage);
         char reg[len];
         addr_reg_shift(reg, RBP, curr_usage);
-        emit_mov(CALL_REGS[i], reg, s);
+        if (sameType(params->nth(i)->getType(), Float)) emit_movsd(CALL_XMM[float_num++], reg, s);
+        else emit_mov(CALL_REGS[int_num++], reg, s);
         // add to scope
         varNameToAddr.addid(params->nth(i)->getName(), new int(name_proc.size()));
         char *c = new char[len];
@@ -603,7 +606,6 @@ void StmtBlock_class::code(ostream &s) {
 
     VariableDecls localVarDecls = getVariableDecls();
     for (int i = localVarDecls->first(); localVarDecls->more(i); i = localVarDecls->next(i)) {
-//        localVarDecl->code(s);
         // new stack piece
         emit_sub("$8", RSP, s);
         // move param to sub stack
@@ -892,21 +894,33 @@ void Call_class::code(ostream &s) {
     if (cgen_debug) cout << "--- Call_class::code ---\n";
 
     if (strcmp(name->get_string(), print->get_string())==0) {
-        int float_cnt = 0;
+        int int_num_tmp = 0;
+        int float_num_tmp = 0;
+        int float_num = 0;
         for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
             actuals->nth(i)->code(s);
-            if (sameType(actuals->nth(i)->getType(), Float)) ++float_cnt;
+            if (sameType(actuals->nth(i)->getType(), Float)) ++float_num;
         }
+        stack<char const *> stk;
         for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
             const char *a = operandStack.top();
             operandStack.pop();
-            emit_mov(a, CALL_REGS[actuals->len()-1-i], s);
+            stk.push(a);
+        }
+        for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
+            const char *a = stk.top();
+            stk.pop();
+            if (sameType(actuals->nth(i)->getType(), Float)) {
+                emit_movsd(a, CALL_XMM[float_num_tmp++], s);
+            }
+            else emit_mov(a, CALL_REGS[int_num_tmp++], s);
+            delete [] a;
         }
         // get stack space ready for the result
         emit_sub("$8", RSP, s);
         curr_usage += 8;
         int res_addr = curr_usage;
-        int tmp = float_cnt;
+        int tmp = float_num;
         int digit = 0;
         if (tmp == 0) digit = 1;
         else
@@ -915,7 +929,7 @@ void Call_class::code(ostream &s) {
                 tmp /= 10;
             }
         char ctmp[digit];
-        sprintf(ctmp, "%d", float_cnt);
+        sprintf(ctmp, "%d", float_num);
         emit_irmovl(ctmp, EAX, s);
         // store the workspace (caller reg)
         emit_push(R10, s);
@@ -929,22 +943,34 @@ void Call_class::code(ostream &s) {
         curr_usage -= 16;
     }
     else {
+        int int_num_tmp = 0;
+        int float_num_tmp = 0;
         for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
             actuals->nth(i)->code(s);
+        }
+        stack<char const *> stk;
+        for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
             const char *a = operandStack.top();
             operandStack.pop();
-            emit_mov(a, CALL_REGS[i], s);
+            stk.push(a);
+        }
+        for (int i = actuals->first(); actuals->more(i); i = actuals->next(i)) {
+            const char *a = stk.top();
+            stk.pop();
+            if (sameType(actuals->nth(i)->getType(), Float)) emit_movsd(a, CALL_XMM[float_num_tmp++], s);
+            else emit_mov(a, CALL_REGS[int_num_tmp++], s);
+            delete [] a;
         }
         // store the workspace (caller reg)
-//        emit_push(R10, s);
-//        emit_push(R11, s);
-//        curr_usage += 16;
+        emit_push(R10, s);
+        emit_push(R11, s);
+        curr_usage += 16;
         // call
         emit_call(name->get_string(), s);
         // restore workspace
-//        emit_pop(R11, s);
-//        emit_pop(R10, s);
-//        curr_usage -= 16;
+        emit_pop(R11, s);
+        emit_pop(R10, s);
+        curr_usage -= 16;
         if (!sameType(getType(), Void)) {
             // get stack space ready for the result
             emit_sub("$8", RSP, s);
@@ -1155,12 +1181,12 @@ void Minus_class::code(ostream &s) {
         operandStack.pop();
         emit_mov(c, RBX, s);
         delete c;
-        emit_sub(RBX, R12, s);
+        emit_sub(R12, RBX, s);
         // store result
         int len = count_len_addr_reg_shift(RBP, res_addr);
         char reg[len];
         addr_reg_shift(reg, RBP, res_addr);
-        emit_mov(R12, reg, s);
+        emit_mov(RBX, reg, s);
 
         // put result into the operandStack
         char *str = new char[len];
@@ -3226,7 +3252,6 @@ void Object_class::code(ostream &s) {
         return;
     }
     if (cgen_debug) cout << "--- Object_class::code ---\n";
-
     // lookup its addr in varNameToAddr
     int pos = *(varNameToAddr.lookup(var));
     char *addr = new char[strlen(name_proc[pos])];
